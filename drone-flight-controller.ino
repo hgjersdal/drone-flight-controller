@@ -8,6 +8,17 @@
 // ---------------------------------------------------------------------------
 #include <Wire.h>
 // ------------------- Define some constants for convenience -----------------
+#include "WiFi.h"
+#include "AsyncUDP.h"
+
+const char * ssid = "ELAB";
+const char * password = "1010101010";
+
+AsyncUDP udp;
+
+int throttle = 0;
+// -------------------------------
+
 #define CHANNEL1 0
 #define CHANNEL2 1
 #define CHANNEL3 2
@@ -112,70 +123,6 @@ int battery_voltage;
 // ---------------------------------------------------------------------------
 
 /**
- * Setup configuration
- */
-void setup() {
-    // Start I2C communication
-    Wire.begin();
-    TWBR = 12; // Set the I2C clock speed to 400kHz.
-
-    // Turn LED on during setup
-    pinMode(13, OUTPUT);
-    digitalWrite(13, HIGH);
-
-    // Set pins #4 #5 #6 #7 as outputs
-    DDRD |= B11110000;
-
-    setupMpu6050Registers();
-
-    calibrateMpu6050();
-
-    configureChannelMapping();
-
-    // Configure interrupts for receiver
-    PCICR  |= (1 << PCIE0);  // Set PCIE0 to enable PCMSK0 scan
-    PCMSK0 |= (1 << PCINT0); // Set PCINT0 (digital input 8) to trigger an interrupt on state change
-    PCMSK0 |= (1 << PCINT1); // Set PCINT1 (digital input 9) to trigger an interrupt on state change
-    PCMSK0 |= (1 << PCINT2); // Set PCINT2 (digital input 10)to trigger an interrupt on state change
-    PCMSK0 |= (1 << PCINT3); // Set PCINT3 (digital input 11)to trigger an interrupt on state change
-
-    period = (1000000/FREQ) ; // Sampling period in µs
-
-    // Initialize loop_timer
-    loop_timer = micros();
-
-    // Turn LED off now setup is done
-    digitalWrite(13, LOW);
-}
-
-/**
- * Main program loop
- */
-void loop() {
-    // 1. First, read raw values from MPU-6050
-    readSensor();
-
-    // 2. Calculate angles from gyro & accelerometer's values
-    calculateAngles();
-
-    // 3. Calculate set points of PID controller
-    calculateSetPoints();
-
-    // 4. Calculate errors comparing angular motions to set points
-    calculateErrors();
-
-    if (isStarted()) {
-        // 5. Calculate motors speed with PID controller
-        pidController();
-
-        compensateBatteryDrop();
-    }
-
-    // 6. Apply motors speed
-    applyMotorSpeed();
-}
-
-/**
  * Generate servo-signal on digital pins #4 #5 #6 #7 with a frequency of 250Hz (4ms period).
  * Direct port manipulation is used for performances.
  *
@@ -190,19 +137,24 @@ void applyMotorSpeed() {
     // Update loop timer
     loop_timer = now;
 
+    analogWrite(18, (pulse_length_esc1/2000.0) * 255.0);
+    analogWrite(5,  (pulse_length_esc2/2000.0) * 255.0);
+    analogWrite(10, (pulse_length_esc3/2000.0) * 255.0);
+    analogWrite(9,  (pulse_length_esc4/2000.0) * 255.0);
+
     // Set pins #4 #5 #6 #7 HIGH
-    PORTD |= B11110000;
+    // PORTD |= B11110000;
 
     // Wait until all pins #4 #5 #6 #7 are LOW
-    while (PORTD >= 16) {
-        now        = micros();
-        difference = now - loop_timer;
+    //while (PORTD >= 16) {
+    //    now        = micros();
+    //    difference = now - loop_timer;
 
-        if (difference >= pulse_length_esc1) PORTD &= B11101111; // Set pin #4 LOW
-        if (difference >= pulse_length_esc2) PORTD &= B11011111; // Set pin #5 LOW
-        if (difference >= pulse_length_esc3) PORTD &= B10111111; // Set pin #6 LOW
-        if (difference >= pulse_length_esc4) PORTD &= B01111111; // Set pin #7 LOW
-    }
+    //    if (difference >= pulse_length_esc1) PORTD &= B11101111; // Set pin #4 LOW
+    //    if (difference >= pulse_length_esc2) PORTD &= B11011111; // Set pin #5 LOW
+    //    if (difference >= pulse_length_esc3) PORTD &= B10111111; // Set pin #6 LOW
+    //    if (difference >= pulse_length_esc4) PORTD &= B01111111; // Set pin #7 LOW
+    //}
 }
 
 /**
@@ -224,6 +176,23 @@ void readSensor() {
     gyro_raw[X] = Wire.read() << 8 | Wire.read(); // Add the low and high byte to the gyro_raw[X] variable
     gyro_raw[Y] = Wire.read() << 8 | Wire.read(); // Add the low and high byte to the gyro_raw[Y] variable
     gyro_raw[Z] = Wire.read() << 8 | Wire.read(); // Add the low and high byte to the gyro_raw[Z] variable
+  /*
+    Serial.print("Acc x: ");
+    Serial.print(acc_raw[X]);
+    Serial.print(" Acc y: ");
+    Serial.print(acc_raw[Y]);
+    Serial.print(" Acc z: ");
+    Serial.println(acc_raw[Z]);
+    Serial.print("temp:  ");
+    Serial.println(temperature);
+    Serial.print("Gyro x: ");
+    Serial.print(gyro_raw[X]);
+    Serial.print(" Gyro y: ");
+    Serial.print(gyro_raw[Y]);
+    Serial.print(" Gyro z: ");
+    Serial.println(gyro_raw[Z]);
+    delay(1000);
+    */
 }
 
 /**
@@ -309,7 +278,7 @@ void pidController() {
     float yaw_pid      = 0;
     float pitch_pid    = 0;
     float roll_pid     = 0;
-    int   throttle     = pulse_length[mode_mapping[THROTTLE]];
+    //int   throttle     = pulse_length[mode_mapping[THROTTLE]];
 
     // Initialize motor commands with throttle
     pulse_length_esc1 = throttle;
@@ -436,9 +405,9 @@ void calibrateMpu6050() {
         gyro_offset[Z] += gyro_raw[Z];
 
         // Generate low throttle pulse to init ESC and prevent them beeping
-        PORTD |= B11110000;      // Set pins #4 #5 #6 #7 HIGH
-        delayMicroseconds(1000); // Wait 1000µs
-        PORTD &= B00001111;      // Then set LOW
+        //PORTD |= B11110000;      // Set pins #4 #5 #6 #7 HIGH
+        //delayMicroseconds(1000); // Wait 1000µs
+        //PORTD &= B00001111;      // Then set LOW
 
         // Just wait a bit before next loop
         delay(3);
@@ -470,39 +439,6 @@ float minMax(float value, float min_value, float max_value) {
 }
 
 /**
- * Return whether the quadcopter is started.
- * To start the quadcopter, move the left stick in bottom left corner then, move it back in center position.
- * To stop the quadcopter move the left stick in bottom right corner.
- *
- * @return bool
- */
-bool isStarted() {
-    // When left stick is moved in the bottom left corner
-    if (status == STOPPED && pulse_length[mode_mapping[YAW]] <= 1012 && pulse_length[mode_mapping[THROTTLE]] <= 1012) {
-        status = STARTING;
-    }
-
-    // When left stick is moved back in the center position
-    if (status == STARTING && pulse_length[mode_mapping[YAW]] == 1500 && pulse_length[mode_mapping[THROTTLE]] <= 1012) {
-        status = STARTED;
-
-        // Reset PID controller's variables to prevent bump start
-        resetPidController();
-
-        resetGyroAngles();
-    }
-
-    // When left stick is moved in the bottom right corner
-    if (status == STARTED && pulse_length[mode_mapping[YAW]] >= 1988 && pulse_length[mode_mapping[THROTTLE]] <= 1012) {
-        status = STOPPED;
-        // Make sure to always stop motors when status is STOPPED
-        stopAll();
-    }
-
-    return status == STARTED;
-}
-
-/**
  * Reset gyro's angles with accelerometer's angles.
  */
 void resetGyroAngles() {
@@ -524,7 +460,7 @@ void stopAll() {
  * Reset all PID controller's variables.
  */
 void resetPidController() {
-    errors[YAW]   = 0;
+  errors[YAW]   = 0;
     errors[PITCH] = 0;
     errors[ROLL]  = 0;
 
@@ -625,50 +561,212 @@ bool isBatteryConnected() {
  * @see https://www.arduino.cc/en/Reference/PortManipulation
  * @see https://www.firediy.fr/article/utiliser-sa-radiocommande-avec-un-arduino-drone-ch-6
  */
-ISR(PCINT0_vect) {
-        current_time = micros();
+/* void myInterrupt(PCINT0_vect) { */
+/*         current_time = micros(); */
 
-        // Channel 1 -------------------------------------------------
-        if (PINB & B00000001) {                                        // Is input 8 high ?
-            if (previous_state[CHANNEL1] == LOW) {                     // Input 8 changed from 0 to 1 (rising edge)
-                previous_state[CHANNEL1] = HIGH;                       // Save current state
-                timer[CHANNEL1] = current_time;                        // Save current time
-            }
-        } else if (previous_state[CHANNEL1] == HIGH) {                 // Input 8 changed from 1 to 0 (falling edge)
-            previous_state[CHANNEL1] = LOW;                            // Save current state
-            pulse_length[CHANNEL1] = current_time - timer[CHANNEL1];   // Calculate pulse duration & save it
-        }
+/*         // Channel 1 ------------------------------------------------- */
+/*         if (PINB & B00000001) {                                        // Is input 8 high ? */
+/*             if (previous_state[CHANNEL1] == LOW) {                     // Input 8 changed from 0 to 1 (rising edge) */
+/*                 previous_state[CHANNEL1] = HIGH;                       // Save current state */
+/*                 timer[CHANNEL1] = current_time;                        // Save current time */
+/*             } */
+/*         } else if (previous_state[CHANNEL1] == HIGH) {                 // Input 8 changed from 1 to 0 (falling edge) */
+/*             previous_state[CHANNEL1] = LOW;                            // Save current state */
+/*             pulse_length[CHANNEL1] = current_time - timer[CHANNEL1];   // Calculate pulse duration & save it */
+/*         } */
 
-        // Channel 2 -------------------------------------------------
-        if (PINB & B00000010) {                                        // Is input 9 high ?
-            if (previous_state[CHANNEL2] == LOW) {                     // Input 9 changed from 0 to 1 (rising edge)
-                previous_state[CHANNEL2] = HIGH;                       // Save current state
-                timer[CHANNEL2] = current_time;                        // Save current time
-            }
-        } else if (previous_state[CHANNEL2] == HIGH) {                 // Input 9 changed from 1 to 0 (falling edge)
-            previous_state[CHANNEL2] = LOW;                            // Save current state
-            pulse_length[CHANNEL2] = current_time - timer[CHANNEL2];   // Calculate pulse duration & save it
-        }
+/*         // Channel 2 ------------------------------------------------- */
+/*         if (PINB & B00000010) {                                        // Is input 9 high ? */
+/*             if (previous_state[CHANNEL2] == LOW) {                     // Input 9 changed from 0 to 1 (rising edge) */
+/*                 previous_state[CHANNEL2] = HIGH;                       // Save current state */
+/*                 timer[CHANNEL2] = current_time;                        // Save current time */
+/*             } */
+/*         } else if (previous_state[CHANNEL2] == HIGH) {                 // Input 9 changed from 1 to 0 (falling edge) */
+/*             previous_state[CHANNEL2] = LOW;                            // Save current state */
+/*             pulse_length[CHANNEL2] = current_time - timer[CHANNEL2];   // Calculate pulse duration & save it */
+/*         } */
 
-        // Channel 3 -------------------------------------------------
-        if (PINB & B00000100) {                                        // Is input 10 high ?
-            if (previous_state[CHANNEL3] == LOW) {                     // Input 10 changed from 0 to 1 (rising edge)
-                previous_state[CHANNEL3] = HIGH;                       // Save current state
-                timer[CHANNEL3] = current_time;                        // Save current time
-            }
-        } else if (previous_state[CHANNEL3] == HIGH) {                 // Input 10 changed from 1 to 0 (falling edge)
-            previous_state[CHANNEL3] = LOW;                            // Save current state
-            pulse_length[CHANNEL3] = current_time - timer[CHANNEL3];   // Calculate pulse duration & save it
-        }
+/*         // Channel 3 ------------------------------------------------- */
+/*         if (PINB & B00000100) {                                        // Is input 10 high ? */
+/*             if (previous_state[CHANNEL3] == LOW) {                     // Input 10 changed from 0 to 1 (rising edge) */
+/*                 previous_state[CHANNEL3] = HIGH;                       // Save current state */
+/*                 timer[CHANNEL3] = current_time;                        // Save current time */
+/*             } */
+/*         } else if (previous_state[CHANNEL3] == HIGH) {                 // Input 10 changed from 1 to 0 (falling edge) */
+/*             previous_state[CHANNEL3] = LOW;                            // Save current state */
+/*             pulse_length[CHANNEL3] = current_time - timer[CHANNEL3];   // Calculate pulse duration & save it */
+/*         } */
 
-        // Channel 4 -------------------------------------------------
-        if (PINB & B00001000) {                                        // Is input 11 high ?
-            if (previous_state[CHANNEL4] == LOW) {                     // Input 11 changed from 0 to 1 (rising edge)
-                previous_state[CHANNEL4] = HIGH;                       // Save current state
-                timer[CHANNEL4] = current_time;                        // Save current time
-            }
-        } else if (previous_state[CHANNEL4] == HIGH) {                 // Input 11 changed from 1 to 0 (falling edge)
-            previous_state[CHANNEL4] = LOW;                            // Save current state
-            pulse_length[CHANNEL4] = current_time - timer[CHANNEL4];   // Calculate pulse duration & save it
+/*         // Channel 4 ------------------------------------------------- */
+/*         if (PINB & B00001000) {                                        // Is input 11 high ? */
+/*             if (previous_state[CHANNEL4] == LOW) {                     // Input 11 changed from 0 to 1 (rising edge) */
+/*                 previous_state[CHANNEL4] = HIGH;                       // Save current state */
+/*                 timer[CHANNEL4] = current_time;                        // Save current time */
+/*             } */
+/*         } else if (previous_state[CHANNEL4] == HIGH) {                 // Input 11 changed from 1 to 0 (falling edge) */
+/*             previous_state[CHANNEL4] = LOW;                            // Save current state */
+/*             pulse_length[CHANNEL4] = current_time - timer[CHANNEL4];   // Calculate pulse duration & save it */
+/*         } */
+/* } */
+
+
+
+
+/**
+ * Return whether the quadcopter is started.
+ * To start the quadcopter, move the left stick in bottom left corner then, move it back in center position.
+ * To stop the quadcopter move the left stick in bottom right corner.
+ *
+ * @return bool
+ */
+bool isStarted() {
+    // When left stick is moved in the bottom left corner
+    if (status == STOPPED && pulse_length[mode_mapping[YAW]] <= 1012 && pulse_length[mode_mapping[THROTTLE]] <= 1012) {
+        status = STARTING;
+    }
+
+    // When left stick is moved back in the center position
+    if (status == STARTING && pulse_length[mode_mapping[YAW]] == 1500 && pulse_length[mode_mapping[THROTTLE]] <= 1012) {
+        status = STARTED;
+
+        // Reset PID controller's variables to prevent bump start
+
+        resetGyroAngles();
+    }
+
+    // When left stick is moved in the bottom right corner
+    if (status == STARTED && pulse_length[mode_mapping[YAW]] >= 1988 && pulse_length[mode_mapping[THROTTLE]] <= 1012) {
+        status = STOPPED;
+        // Make sure to always stop motors when status is STOPPED
+        stopAll();
+    }
+
+    return status == STARTED;
+}
+
+
+/**
+ * Setup configuration
+ */
+void setup() {
+    Serial.begin(115200);
+    Serial.println("Hello!");
+  
+    // Start I2C communication
+    Wire.begin();
+    // TWBR = 12; // Set the I2C clock speed to 400kHz.
+
+    pinMode(18, OUTPUT);
+    pinMode(5, OUTPUT);
+    pinMode(10, OUTPUT);
+    pinMode(9, OUTPUT);
+
+    
+    // Turn LED on during setup
+    pinMode(13, OUTPUT);
+    digitalWrite(13, HIGH);
+
+    // Set pins #4 #5 #6 #7 as outputs
+    // DDRD |= B11110000;
+
+    setupMpu6050Registers();
+
+    calibrateMpu6050();
+
+    //configureChannelMapping();
+
+    // Configure interrupts for receiver
+    //PCICR  |= (1 << PCIE0);  // Set PCIE0 to enable PCMSK0 scan
+    //PCMSK0 |= (1 << PCINT0); // Set PCINT0 (digital input 8) to trigger an interrupt on state change
+    //PCMSK0 |= (1 << PCINT1); // Set PCINT1 (digital input 9) to trigger an interrupt on state change
+    //PCMSK0 |= (1 << PCINT2); // Set PCINT2 (digital input 10)to trigger an interrupt on state change
+    //PCMSK0 |= (1 << PCINT3); // Set PCINT3 (digital input 11)to trigger an interrupt on state change
+
+    //period = (1000000/FREQ) ; // Sampling period in µs
+
+    // Initialize loop_timer
+    loop_timer = micros();
+
+    // Turn LED off now setup is done
+    digitalWrite(13, LOW);
+
+
+    //UDP ASYNC
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(ssid, password);
+    if (WiFi.waitForConnectResult() != WL_CONNECTED) {
+        Serial.println("WiFi Failed");
+        while(1) {
+            delay(1000);
         }
+    }
+    if(udp.listen(1234)) {
+        Serial.print("UDP Listening on IP: ");
+        Serial.println(WiFi.localIP());
+        udp.onPacket([](AsyncUDPPacket packet) {
+            Serial.print("UDP Packet Type: ");
+            Serial.print(packet.isBroadcast()?"Broadcast":packet.isMulticast()?"Multicast":"Unicast");
+            Serial.print(", From: ");
+            Serial.print(packet.remoteIP());
+            Serial.print(":");
+            Serial.print(packet.remotePort());
+            Serial.print(", To: ");
+            Serial.print(packet.localIP());
+            Serial.print(":");
+            Serial.print(packet.localPort());
+            Serial.print(", Length: ");
+            Serial.print(packet.length());
+            Serial.print(", Data: ");
+            Serial.write(packet.data(), packet.length());
+            Serial.println();
+            String myString = String((char *)packet.data());
+            int num = myString.toInt();
+            if(num > 0 and num < 2000 ){
+              Serial.print("Setting throttle to ");
+              Serial.print(throttle);
+              Serial.println();
+              throttle = num;
+ 
+            //reply to the client
+            // packet.printf("Got %u bytes of data", packet.length());
+            }
+        });
+    }
+
+  for(int ii = 0; ii<10; ii++){
+    udp.broadcast("Drone1!");
+    delay(1000);
+  }
+    
+
+  Serial.println("Done setting up.");
+}
+
+/**
+ * Main program loop
+ */
+void loop() {
+    // 1. First, read raw values from MPU-6050
+    // Serial.println("AAAAA");
+    readSensor();
+
+    // 2. Calculate angles from gyro & accelerometer's values
+    calculateAngles();
+
+    // 3. Calculate set points of PID controller
+    calculateSetPoints();
+
+    // 4. Calculate errors comparing angular motions to set points
+    calculateErrors();
+
+    if (isStarted()) {
+        // 5. Calculate motors speed with PID controller
+       pidController();
+
+    /*     compensateBatteryDrop(); */
+    }
+    pidController();
+
+    // 6. Apply motors speed
+    applyMotorSpeed();
 }
